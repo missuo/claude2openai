@@ -12,7 +12,7 @@ curl http://127.0.0.1:6600/v1/chat/completions \
   -d '{
     "model": "claude-3-haiku-20240307",
     "messages": [
-     {
+      {
         "role": "system",
         "content": "翻译为中文!"
       },
