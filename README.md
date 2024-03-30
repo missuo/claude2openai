@@ -57,3 +57,6 @@ Download the latest release from the [release page](https://github.com/missuo/cl
 chmod +x claude2openai
 ./claude2openai
 ```
+
+## License
+[MIT](https://github.com/missuo/claude2openai/blob/main/LICENSE)
