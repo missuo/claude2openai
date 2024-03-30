@@ -2,7 +2,7 @@
  * @Author: Vincent Yang
  * @Date: 2024-03-18 01:12:14
  * @LastEditors: Vincent Yang
- * @LastEditTime: 2024-03-30 01:05:36
+ * @LastEditTime: 2024-03-30 02:06:41
  * @FilePath: /claude2openai/main.go
  * @Telegram: https://t.me/missuo
  * @GitHub: https://github.com/missuo
@@ -27,7 +27,10 @@ import (
 	"github.com/google/uuid"
 )
 
-func proxyToClaude(c *gin.Context, openAIReq OpenAIRequest) {
+func processMessages(openAIReq OpenAIRequest) []struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+} {
 	var newMessages []struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
@@ -39,32 +42,52 @@ func proxyToClaude(c *gin.Context, openAIReq OpenAIRequest) {
 			newMessages = append(newMessages, openAIReq.Messages[i])
 		}
 	}
+	return newMessages
+}
 
-	openAIReq.Messages = newMessages
-
-	claudeReqBody, err := json.Marshal(map[string]interface{}{
+func createClaudeRequest(openAIReq OpenAIRequest, stream bool) ([]byte, error) {
+	return json.Marshal(map[string]interface{}{
 		"model":      openAIReq.Model,
 		"max_tokens": 4096,
 		"messages":   openAIReq.Messages,
+		"stream":     stream,
 	})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal request for Claude API"})
-		return
-	}
+}
+
+func parseAuthorizationHeader(c *gin.Context) (string, error) {
 	authorizationHeader := c.GetHeader("Authorization")
 	if !strings.HasPrefix(authorizationHeader, "Bearer ") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Authorization header format"})
-		return
+		return "", fmt.Errorf("invalid Authorization header format")
 	}
+	return strings.TrimPrefix(authorizationHeader, "Bearer "), nil
+}
 
-	apiKey := strings.TrimPrefix(authorizationHeader, "Bearer ")
+func sendClaudeRequest(claudeReqBody []byte, apiKey string) (*http.Response, error) {
 	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(claudeReqBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
 	client := &http.Client{}
-	resp, err := client.Do(req)
+	return client.Do(req)
+}
+
+func proxyToClaude(c *gin.Context, openAIReq OpenAIRequest) {
+	openAIReq.Messages = processMessages(openAIReq)
+
+	claudeReqBody, err := createClaudeRequest(openAIReq, false)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal request for Claude API"})
+		return
+	}
+
+	apiKey, err := parseAuthorizationHeader(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	resp, err := sendClaudeRequest(claudeReqBody, apiKey)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to call Claude API"})
 		return
@@ -124,45 +147,21 @@ func proxyToClaude(c *gin.Context, openAIReq OpenAIRequest) {
 }
 
 func proxyToClaudeStream(c *gin.Context, openAIReq OpenAIRequest) {
+	openAIReq.Messages = processMessages(openAIReq)
 
-	var newMessages []struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}
-	for i := 0; i < len(openAIReq.Messages); i++ {
-		if openAIReq.Messages[i].Role == "system" && i+1 < len(openAIReq.Messages) {
-			openAIReq.Messages[i+1].Content = openAIReq.Messages[i].Content + " " + openAIReq.Messages[i+1].Content
-		} else if openAIReq.Messages[i].Role != "system" {
-			newMessages = append(newMessages, openAIReq.Messages[i])
-		}
-	}
-
-	openAIReq.Messages = newMessages
-
-	claudeReqBody, err := json.Marshal(map[string]interface{}{
-		"model":      openAIReq.Model,
-		"max_tokens": 4096,
-		"messages":   openAIReq.Messages,
-		"stream":     true,
-	})
+	claudeReqBody, err := createClaudeRequest(openAIReq, true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal request for Claude API"})
 		return
 	}
-	authorizationHeader := c.GetHeader("Authorization")
-	if !strings.HasPrefix(authorizationHeader, "Bearer ") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Authorization header format"})
+
+	apiKey, err := parseAuthorizationHeader(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	apiKey := strings.TrimPrefix(authorizationHeader, "Bearer ")
-	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(claudeReqBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := sendClaudeRequest(claudeReqBody, apiKey)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send request to Claude API"})
 		return
@@ -223,7 +222,7 @@ func escapeJSON(str string) string {
 	return string(b[1 : len(b)-1])
 }
 
-func hanlder(c *gin.Context) {
+func handler(c *gin.Context) {
 	var openAIReq OpenAIRequest
 
 	if err := c.BindJSON(&openAIReq); err != nil {
@@ -264,7 +263,7 @@ func main() {
 			"message": "Welcome to Claude2OpenAI, Made by Vincent Yang. https://github.com/missuo/claude2openai",
 		})
 	})
-	r.POST("/v1/chat/completions", hanlder)
+	r.POST("/v1/chat/completions", handler)
 	r.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{
 			"code":    http.StatusNotFound,
