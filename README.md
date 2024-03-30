@@ -1,5 +1,5 @@
 # Claude2OpenAI
-Used to convert the Claude API to OpenAI compatible API. **Easily use Claude with any Open AI-compatible client.**
+Used to convert the Claude API to OpenAI compatible API. **Easily use Claude with any OpenAI compatible client.**
 
 ## Compatibility
 Currently it is only compatible with the Claude-3 family of models, if you pass in any other model, the default will be to use **claude-3-haiku-20240307**.
