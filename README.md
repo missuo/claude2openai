@@ -5,11 +5,11 @@ This project is used to convert the Claude API to OpenAI compatible API.
 ### Docker
 
 ```bash
-docker run -d --restart always -p 6060:6060 ghcr.io/missuo/claude2openai:latest
+docker run -d --restart always -p 6600:6600 ghcr.io/missuo/claude2openai:latest
 ```
 
 ```bash
-docker run -d --restart always -p 6060:6060 missuo/claude2openai:latest
+docker run -d --restart always -p 6600:6600 missuo/claude2openai:latest
 ```
 
 ### Docker Compose
