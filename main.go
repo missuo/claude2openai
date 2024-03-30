@@ -1,6 +1,19 @@
+/*
+ * @Author: Vincent Yang
+ * @Date: 2024-03-18 01:12:14
+ * @LastEditors: Vincent Yang
+ * @LastEditTime: 2024-03-30 01:05:36
+ * @FilePath: /claude2openai/main.go
+ * @Telegram: https://t.me/missuo
+ * @GitHub: https://github.com/missuo
+ *
+ * Copyright © 2024 by Vincent, All Rights Reserved.
+ */
+
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -9,17 +22,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
-func proxyToClaude(c *gin.Context) {
-	var openAIReq OpenAIRequest
-
-	if err := c.BindJSON(&openAIReq); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	fmt.Println(openAIReq)
+func proxyToClaude(c *gin.Context, openAIReq OpenAIRequest) {
 	var newMessages []struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
@@ -115,8 +123,153 @@ func proxyToClaude(c *gin.Context) {
 	c.JSON(http.StatusOK, openAIResp)
 }
 
+func proxyToClaudeStream(c *gin.Context, openAIReq OpenAIRequest) {
+
+	var newMessages []struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	for i := 0; i < len(openAIReq.Messages); i++ {
+		if openAIReq.Messages[i].Role == "system" && i+1 < len(openAIReq.Messages) {
+			openAIReq.Messages[i+1].Content = openAIReq.Messages[i].Content + " " + openAIReq.Messages[i+1].Content
+		} else if openAIReq.Messages[i].Role != "system" {
+			newMessages = append(newMessages, openAIReq.Messages[i])
+		}
+	}
+
+	openAIReq.Messages = newMessages
+
+	claudeReqBody, err := json.Marshal(map[string]interface{}{
+		"model":      openAIReq.Model,
+		"max_tokens": 4096,
+		"messages":   openAIReq.Messages,
+		"stream":     true,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal request for Claude API"})
+		return
+	}
+	authorizationHeader := c.GetHeader("Authorization")
+	if !strings.HasPrefix(authorizationHeader, "Bearer ") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Authorization header format"})
+		return
+	}
+
+	apiKey := strings.TrimPrefix(authorizationHeader, "Bearer ")
+	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(claudeReqBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", apiKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send request to Claude API"})
+		return
+	}
+	defer resp.Body.Close()
+
+	reader := bufio.NewReader(resp.Body)
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Streaming not supported"})
+		return
+	}
+
+	var content string
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read response from Claude API"})
+			return
+		}
+
+		lineStr := strings.TrimSpace(string(line))
+		if strings.HasPrefix(lineStr, "event: message_start") {
+			c.SSEvent("message", fmt.Sprintf(`{"id":"chatcmpl-%s","object":"chat.completion.chunk","created":%d,"model":"%s","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`,
+				uuid.New().String(), time.Now().Unix(), openAIReq.Model))
+			flusher.Flush()
+		} else if strings.HasPrefix(lineStr, "data:") {
+			dataStr := strings.TrimSpace(strings.TrimPrefix(lineStr, "data:"))
+			var data map[string]interface{}
+			json.Unmarshal([]byte(dataStr), &data)
+			if data["type"] == "content_block_delta" {
+				delta := data["delta"].(map[string]interface{})
+				if delta["type"] == "text_delta" {
+					content += delta["text"].(string)
+					c.SSEvent("message", fmt.Sprintf(`{"id":"chatcmpl-%s","object":"chat.completion.chunk","created":%d,"model":"%s","choices":[{"index":0,"delta":{"content":"%s"},"finish_reason":null}]}`,
+						uuid.New().String(), time.Now().Unix(), openAIReq.Model, escapeJSON(delta["text"].(string))))
+					flusher.Flush()
+				}
+			}
+		} else if strings.HasPrefix(lineStr, "event: message_stop") {
+			c.SSEvent("message", fmt.Sprintf(`{"id":"chatcmpl-%s","object":"chat.completion.chunk","created":%d,"model":"%s","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+				uuid.New().String(), time.Now().Unix(), openAIReq.Model))
+			flusher.Flush()
+			break
+		}
+	}
+}
+
+func escapeJSON(str string) string {
+	b, _ := json.Marshal(str)
+	return string(b[1 : len(b)-1])
+}
+
+func hanlder(c *gin.Context) {
+	var openAIReq OpenAIRequest
+
+	if err := c.BindJSON(&openAIReq); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	allowModels := []string{"claude-3-haiku-20240307", "claude-3-sonnet-20240229", "claude-3-opus-20240229"}
+
+	// Default model is claude-3-haiku-20240307
+	if !isInSlice(openAIReq.Model, allowModels) {
+		openAIReq.Model = "claude-3-haiku-20240307"
+	}
+
+	// If stream is true, proxy to Claude with stream
+	if openAIReq.Stream {
+		proxyToClaudeStream(c, openAIReq)
+	} else {
+		proxyToClaude(c, openAIReq)
+	}
+}
+
+func isInSlice(str string, list []string) bool {
+	for _, item := range list {
+		if item == str {
+			return true
+		}
+	}
+	return false
+}
+
 func main() {
-	router := gin.Default()
-	router.POST("/v1/completions", proxyToClaude)
-	router.Run(":8080")
+	gin.SetMode(gin.ReleaseMode)
+	r := gin.Default()
+	r.Use(cors.Default())
+	r.GET("/", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Welcome to Claude2OpenAI, Made by Vincent Yang. https://github.com/missuo/claude2openai",
+		})
+	})
+	r.POST("/v1/chat/completions", hanlder)
+	r.NoRoute(func(c *gin.Context) {
+		c.JSON(http.StatusNotFound, gin.H{
+			"code":    http.StatusNotFound,
+			"message": "Path not found",
+		})
+	})
+	r.Run(":6600")
 }

@@ -1,0 +1,6 @@
+services:
+  claude2openai:
+    image: ghcr.io/missuo/claude2openai:latest
+    restart: always
+    ports:
+      - "6600:6600"

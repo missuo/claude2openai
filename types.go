@@ -2,7 +2,7 @@
  * @Author: Vincent Yang
  * @Date: 2024-03-29 23:11:29
  * @LastEditors: Vincent Yang
- * @LastEditTime: 2024-03-29 23:11:44
+ * @LastEditTime: 2024-03-30 00:00:44
  * @FilePath: /claude2openai/types.go
  * @Telegram: https://t.me/missuo
  * @GitHub: https://github.com/missuo
