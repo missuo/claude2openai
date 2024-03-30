@@ -3,6 +3,7 @@ WORKDIR /go/src/github.com/missuo/claude2openai
 COPY main.go ./
 COPY go.mod ./
 COPY go.sum ./
+COPY types.go ./
 RUN go get -d -v ./
 RUN CGO_ENABLED=0 go build -a -installsuffix cgo -o claude2openai .
 
