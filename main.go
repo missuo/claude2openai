@@ -222,6 +222,8 @@ func escapeJSON(str string) string {
 	return string(b[1 : len(b)-1])
 }
 
+var allowModels = []string{"claude-3-haiku-20240307", "claude-3-sonnet-20240229", "claude-3-opus-20240229", "claude-3-5-sonnet-20240620"}
+
 func handler(c *gin.Context) {
 	var openAIReq OpenAIRequest
 
@@ -230,11 +232,9 @@ func handler(c *gin.Context) {
 		return
 	}
 
-	allowModels := []string{"claude-3-haiku-20240307", "claude-3-sonnet-20240229", "claude-3-opus-20240229"}
-
 	// Default model is claude-3-haiku-20240307
 	if !isInSlice(openAIReq.Model, allowModels) {
-		openAIReq.Model = "claude-3-haiku-20240307"
+		openAIReq.Model = allowModels[0]
 	}
 
 	// If stream is true, proxy to Claude with stream
@@ -243,6 +243,20 @@ func handler(c *gin.Context) {
 	} else {
 		proxyToClaude(c, openAIReq)
 	}
+}
+
+func modelsHandler(c *gin.Context) {
+	openAIResp := OpenAIModelsResponse{
+		Object: "list",
+	}
+	for _, model := range allowModels {
+		openAIResp.Data = append(openAIResp.Data, OpenAIModel{
+			ID:      model,
+			Object:  "model",
+			OwnedBy: "user",
+		})
+	}
+	c.JSON(http.StatusOK, openAIResp)
 }
 
 func isInSlice(str string, list []string) bool {
@@ -264,6 +278,7 @@ func main() {
 		})
 	})
 	r.POST("/v1/chat/completions", handler)
+	r.GET("/v1/models", modelsHandler)
 	r.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{
 			"code":    http.StatusNotFound,
