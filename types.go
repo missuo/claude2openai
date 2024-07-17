@@ -17,7 +17,25 @@ type OpenAIRequest struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
 	} `json:"messages"`
-	Stream bool `json:"stream"`
+	Stream      bool     `json:"stream"`
+	Temperature *float64 `json:"temperature,omitempty"`
+	TopP        *float64 `json:"top_p,omitempty"`
+}
+
+type ClaudeMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type ClaudeAPIRequest struct {
+	Model       string          `json:"model"`
+	MaxTokens   int             `json:"max_tokens"`
+	Messages    []ClaudeMessage `json:"messages"`
+	System      *string         `json:"system,omitempty"`
+	Stream      bool            `json:"stream"`
+	Temperature *float64        `json:"temperature,omitempty"`
+	TopK        *int            `json:"top_k,omitempty"`
+	TopP        *float64        `json:"top_p,omitempty"`
 }
 
 type ClaudeAPIResponse struct {
