@@ -27,31 +27,28 @@ import (
 	"github.com/google/uuid"
 )
 
-func processMessages(openAIReq OpenAIRequest) []struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-} {
-	var newMessages []struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}
+func processMessages(openAIReq OpenAIRequest) ([]ClaudeMessage, *string) {
+	var newMessages []ClaudeMessage
+	var systemPrompt *string
 	for i := 0; i < len(openAIReq.Messages); i++ {
-		if openAIReq.Messages[i].Role == "system" && i+1 < len(openAIReq.Messages) {
-			openAIReq.Messages[i+1].Content = openAIReq.Messages[i].Content + " " + openAIReq.Messages[i+1].Content
-		} else if openAIReq.Messages[i].Role != "system" {
+		if openAIReq.Messages[i].Role == "system" {
+			systemPrompt = &openAIReq.Messages[i].Content
+		} else {
 			newMessages = append(newMessages, openAIReq.Messages[i])
 		}
 	}
-	return newMessages
+	return newMessages, systemPrompt
 }
 
 func createClaudeRequest(openAIReq OpenAIRequest, stream bool) ([]byte, error) {
-	return json.Marshal(map[string]interface{}{
-		"model":      openAIReq.Model,
-		"max_tokens": 4096,
-		"messages":   openAIReq.Messages,
-		"stream":     stream,
-	})
+	var claudeReq ClaudeAPIRequest
+	claudeReq.Model = openAIReq.Model
+	claudeReq.MaxTokens = 4096
+	claudeReq.Messages, claudeReq.System = processMessages(openAIReq)
+	claudeReq.Stream = stream
+	claudeReq.Temperature = openAIReq.Temperature
+	claudeReq.TopP = openAIReq.TopP
+	return json.Marshal(claudeReq)
 }
 
 func parseAuthorizationHeader(c *gin.Context) (string, error) {
@@ -73,8 +70,6 @@ func sendClaudeRequest(claudeReqBody []byte, apiKey string) (*http.Response, err
 }
 
 func proxyToClaude(c *gin.Context, openAIReq OpenAIRequest) {
-	openAIReq.Messages = processMessages(openAIReq)
-
 	claudeReqBody, err := createClaudeRequest(openAIReq, false)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal request for Claude API"})
@@ -147,8 +142,6 @@ func proxyToClaude(c *gin.Context, openAIReq OpenAIRequest) {
 }
 
 func proxyToClaudeStream(c *gin.Context, openAIReq OpenAIRequest) {
-	openAIReq.Messages = processMessages(openAIReq)
-
 	claudeReqBody, err := createClaudeRequest(openAIReq, true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal request for Claude API"})
