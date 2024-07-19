@@ -48,6 +48,15 @@ type ClaudeAPIResponse struct {
 		InputTokens  int `json:"input_tokens"`
 		OutputTokens int `json:"output_tokens"`
 	} `json:"usage"`
+	Error *struct {
+		Type    string `json:"type"`
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
+}
+
+type OpenAIError struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
 }
 
 type OpenAIResponse struct {
@@ -70,6 +79,7 @@ type OpenAIResponse struct {
 		CompletionTokens int `json:"completion_tokens"`
 		TotalTokens      int `json:"total_tokens"`
 	} `json:"usage"`
+	Error *OpenAIError `json:"error,omitempty"`
 }
 
 type OpenAIModel struct {

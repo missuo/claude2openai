@@ -100,6 +100,10 @@ func proxyToClaude(c *gin.Context, openAIReq OpenAIRequest) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse response from Claude API"})
 		return
 	}
+	if claudeResp.Error != nil {
+		c.JSON(resp.StatusCode, gin.H{"error": OpenAIError{Type: claudeResp.Error.Type, Message: claudeResp.Error.Message}})
+		return
+	}
 
 	openAIResp := OpenAIResponse{
 		ID:      claudeResp.ID,
