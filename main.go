@@ -219,7 +219,16 @@ func escapeJSON(str string) string {
 	return string(b[1 : len(b)-1])
 }
 
-var allowModels = []string{"claude-3-haiku-20240307", "claude-3-sonnet-20240229", "claude-3-opus-20240229", "claude-3-5-sonnet-20240620"}
+var allowModels = []string{
+	"claude-3-5-haiku-20241022", // 默认模型
+	"claude-3-5-sonnet-20241022",
+	"claude-3-5-sonnet-20240620",
+	"claude-3-opus-20240229",
+	"claude-3-sonnet-20240229",
+	"claude-3-haiku-20240307",
+	"claude-2.1",
+	"claude-2.0",
+}
 
 func handler(c *gin.Context) {
 	var openAIReq OpenAIRequest
