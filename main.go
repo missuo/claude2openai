@@ -176,6 +176,10 @@ func proxyToClaudeStream(c *gin.Context, openAIReq OpenAIRequest) {
 		return
 	}
 
+	// Generate a single ID for the entire conversation
+	chatID := fmt.Sprintf("chatcmpl-%s", uuid.New().String())
+	timestamp := time.Now().Unix()
+
 	var content string
 	for {
 		line, err := reader.ReadString('\n')
@@ -189,8 +193,9 @@ func proxyToClaudeStream(c *gin.Context, openAIReq OpenAIRequest) {
 
 		lineStr := strings.TrimSpace(string(line))
 		if strings.HasPrefix(lineStr, "event: message_start") {
-			c.SSEvent("message", fmt.Sprintf(`{"id":"chatcmpl-%s","object":"chat.completion.chunk","created":%d,"model":"%s","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`,
-				uuid.New().String(), time.Now().Unix(), openAIReq.Model))
+			data := fmt.Sprintf("data: {\"choices\":[{\"delta\":{\"refusal\":null,\"role\":\"assistant\"},\"finish_reason\":null,\"index\":0,\"logprobs\":null}],\"created\":%d,\"id\":\"%s\",\"model\":\"%s\",\"object\":\"chat.completion.chunk\",\"system_fingerprint\":\"fp_f3927aa00d\"}\n\n",
+				timestamp, chatID, openAIReq.Model)
+			c.Writer.WriteString(data)
 			flusher.Flush()
 		} else if strings.HasPrefix(lineStr, "data:") {
 			dataStr := strings.TrimSpace(strings.TrimPrefix(lineStr, "data:"))
@@ -200,15 +205,18 @@ func proxyToClaudeStream(c *gin.Context, openAIReq OpenAIRequest) {
 				delta := data["delta"].(map[string]interface{})
 				if delta["type"] == "text_delta" {
 					content += delta["text"].(string)
-					c.SSEvent("message", fmt.Sprintf(`{"id":"chatcmpl-%s","object":"chat.completion.chunk","created":%d,"model":"%s","choices":[{"index":0,"delta":{"content":"%s"},"finish_reason":null}]}`,
-						uuid.New().String(), time.Now().Unix(), openAIReq.Model, escapeJSON(delta["text"].(string))))
+					data := fmt.Sprintf("data: {\"choices\":[{\"delta\":{\"content\":\"%s\"},\"finish_reason\":null,\"index\":0,\"logprobs\":null}],\"created\":%d,\"id\":\"%s\",\"model\":\"%s\",\"object\":\"chat.completion.chunk\",\"system_fingerprint\":\"fp_f3927aa00d\"}\n\n",
+						escapeJSON(delta["text"].(string)), timestamp, chatID, openAIReq.Model)
+					c.Writer.WriteString(data)
 					flusher.Flush()
 				}
 			}
 		} else if strings.HasPrefix(lineStr, "event: message_stop") {
-			c.SSEvent("message", fmt.Sprintf(`{"id":"chatcmpl-%s","object":"chat.completion.chunk","created":%d,"model":"%s","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
-				uuid.New().String(), time.Now().Unix(), openAIReq.Model))
+			data := fmt.Sprintf("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\",\"index\":0,\"logprobs\":null}],\"created\":%d,\"id\":\"%s\",\"model\":\"%s\",\"object\":\"chat.completion.chunk\",\"system_fingerprint\":\"fp_f3927aa00d\"}\n\n",
+				timestamp, chatID, openAIReq.Model)
+			c.Writer.WriteString(data)
 			flusher.Flush()
+			c.Writer.WriteString("data: [DONE]\n\n")
 			break
 		}
 	}
@@ -219,7 +227,16 @@ func escapeJSON(str string) string {
 	return string(b[1 : len(b)-1])
 }
 
-var allowModels = []string{"claude-3-haiku-20240307", "claude-3-sonnet-20240229", "claude-3-opus-20240229", "claude-3-5-sonnet-20240620"}
+var allowModels = []string{
+	"claude-3-5-haiku-20241022", // 默认模型
+	"claude-3-5-sonnet-20241022",
+	"claude-3-5-sonnet-20240620",
+	"claude-3-opus-20240229",
+	"claude-3-sonnet-20240229",
+	"claude-3-haiku-20240307",
+	"claude-2.1",
+	"claude-2.0",
+}
 
 func handler(c *gin.Context) {
 	var openAIReq OpenAIRequest
