@@ -2,7 +2,7 @@
 Used to convert the Claude API to OpenAI compatible API. **Easily use Claude with any OpenAI compatible client.**
 
 ## Compatibility
-Currently it is only compatible with the Claude-3 family of models, if you pass in any other model, the default will be to use **claude-3-haiku-20240307**.
+Currently it is only compatible with the Claude-3 family of models, if you pass in any other model, the default will be to use **claude-3-5-haiku-20241022**.
 
 ## Request Example
 ```bash
@@ -10,7 +10,7 @@ curl http://127.0.0.1:6600/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk-ant-xxxxxxxxxxxxxxxx" \
   -d '{
-    "model": "claude-3-haiku-20240307",
+    "model": "claude-3-5-haiku-20241022",
     "messages": [
       {
         "role": "system",
@@ -27,6 +27,13 @@ curl http://127.0.0.1:6600/v1/chat/completions \
 
 
 ## Usage
+### Homebrew (MacOS)
+
+```bash
+brew tap owo-network/brew
+brew install claude2openai
+```
+
 ### Docker
 
 ```bash
