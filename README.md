@@ -25,14 +25,16 @@ curl http://127.0.0.1:6600/v1/chat/completions \
   }'
 ```
 
-
 ## Usage
 ### Homebrew (MacOS)
+
+**Special thanks to [Sma1lboy](https://github.com/Sma1lboy) for his contribution.**
 
 ```bash
 brew tap owo-network/brew
 brew install claude2openai
 ```
+
 
 ### Docker
 
