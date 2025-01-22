@@ -2,7 +2,7 @@
  * @Author: Vincent Yang
  * @Date: 2024-03-18 01:12:14
  * @LastEditors: Vincent Yang
- * @LastEditTime: 2024-03-30 02:06:41
+ * @LastEditTime: 2025-01-22 15:41:43
  * @FilePath: /claude2openai/main.go
  * @Telegram: https://t.me/missuo
  * @GitHub: https://github.com/missuo
@@ -16,9 +16,11 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -283,6 +285,19 @@ func isInSlice(str string, list []string) bool {
 }
 
 func main() {
+	// Define command line flags
+	var port string
+	flag.StringVar(&port, "p", "", "specify server port")
+	flag.Parse()
+
+	// If command line flag is empty, try to get port from environment variable
+	if port == "" {
+		port = os.Getenv("PORT")
+		// If environment variable is also empty, use default port
+		if port == "" {
+			port = "6600"
+		}
+	}
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 	r.Use(cors.Default())
@@ -299,5 +314,7 @@ func main() {
 			"message": "Path not found",
 		})
 	})
-	r.Run(":6600")
+	// Start Claude2OpenAI with specified port
+	fmt.Printf("Claude2OpenAI is running on port %s\n", port)
+	r.Run(fmt.Sprintf(":%s", port))
 }
