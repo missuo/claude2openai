@@ -229,7 +229,7 @@ func escapeJSON(str string) string {
 	return string(b[1 : len(b)-1])
 }
 
-var allowModels = []string{
+var defaultModels = []string{
 	"claude-3-5-haiku-20241022", // 默认模型
 	"claude-3-5-sonnet-20241022",
 	"claude-3-5-sonnet-20240620",
@@ -240,6 +240,22 @@ var allowModels = []string{
 	"claude-2.0",
 }
 
+// getAllowedModels gets the list of allowed models from environment variable
+// or falls back to the default list
+func getAllowedModels() []string {
+	allowedModelsEnv := os.Getenv("ALLOWED_MODELS")
+	if allowedModelsEnv != "" {
+		// Split the comma-separated string into a slice
+		allowedModels := strings.Split(allowedModelsEnv, ",")
+		// Trim whitespace from each model name
+		for i, model := range allowedModels {
+			allowedModels[i] = strings.TrimSpace(model)
+		}
+		return allowedModels
+	}
+	return defaultModels
+}
+
 func handler(c *gin.Context) {
 	var openAIReq OpenAIRequest
 
@@ -248,9 +264,12 @@ func handler(c *gin.Context) {
 		return
 	}
 
-	// Default model is claude-3-haiku-20240307
-	if !isInSlice(openAIReq.Model, allowModels) {
-		openAIReq.Model = allowModels[0]
+	// Get allowed models
+	allowedModels := getAllowedModels()
+	
+	// Default model is the first in the allowed models list
+	if !isInSlice(openAIReq.Model, allowedModels) {
+		openAIReq.Model = allowedModels[0]
 	}
 
 	// If stream is true, proxy to Claude with stream
@@ -262,10 +281,13 @@ func handler(c *gin.Context) {
 }
 
 func modelsHandler(c *gin.Context) {
+	// Get allowed models
+	allowedModels := getAllowedModels()
+	
 	openAIResp := OpenAIModelsResponse{
 		Object: "list",
 	}
-	for _, model := range allowModels {
+	for _, model := range allowedModels {
 		openAIResp.Data = append(openAIResp.Data, OpenAIModel{
 			ID:      model,
 			Object:  "model",
