@@ -11,20 +11,43 @@
  */
 package main
 
+type OpenAIMessageContent struct {
+	Type     string `json:"type"`
+	Text     string `json:"text,omitempty"`
+	ImageURL struct {
+		URL    string `json:"url"`
+		Detail string `json:"detail,omitempty"`
+	} `json:"image_url,omitempty"`
+}
+
+type OpenAIMessage struct {
+	Role    string                  `json:"role"`
+	Content interface{}             `json:"content"`
+}
+
 type OpenAIRequest struct {
-	Model    string `json:"model"`
-	Messages []struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	} `json:"messages"`
+	Model    string         `json:"model"`
+	Messages []OpenAIMessage `json:"messages"`
 	Stream      bool     `json:"stream"`
 	Temperature *float64 `json:"temperature,omitempty"`
 	TopP        *float64 `json:"top_p,omitempty"`
 }
 
+type ClaudeSource struct {
+	Type      string `json:"type"`
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
+}
+
+type ClaudeContent struct {
+	Type     string       `json:"type"`
+	Text     string       `json:"text,omitempty"`
+	Source   *ClaudeSource `json:"source,omitempty"`
+}
+
 type ClaudeMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string          `json:"role"`
+	Content []ClaudeContent `json:"content"`
 }
 
 type ClaudeAPIRequest struct {
@@ -39,9 +62,7 @@ type ClaudeAPIRequest struct {
 }
 
 type ClaudeAPIResponse struct {
-	Content []struct {
-		Text string `json:"text"`
-	} `json:"content"`
+	Content []ClaudeContent `json:"content"`
 	ID    string `json:"id"`
 	Model string `json:"model"`
 	Usage struct {

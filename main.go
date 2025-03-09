@@ -21,6 +21,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,16 +30,114 @@ import (
 	"github.com/google/uuid"
 )
 
+// Global debug flag
+var debugMode bool
+
+// debugLog prints a message only if debug mode is enabled
+func debugLog(format string, args ...interface{}) {
+	if debugMode {
+		fmt.Printf(format+"\n", args...)
+	}
+}
+
 func processMessages(openAIReq OpenAIRequest) ([]ClaudeMessage, *string) {
 	var newMessages []ClaudeMessage
 	var systemPrompt *string
+
 	for i := 0; i < len(openAIReq.Messages); i++ {
-		if openAIReq.Messages[i].Role == "system" {
-			systemPrompt = &openAIReq.Messages[i].Content
+		message := openAIReq.Messages[i]
+		
+		if message.Role == "system" {
+			// Extract system message as string
+			var systemContent string
+			switch c := message.Content.(type) {
+			case string:
+				systemContent = c
+			case []interface{}:
+				// For array content, concatenate all text parts
+				for _, part := range c {
+					if contentMap, ok := part.(map[string]interface{}); ok {
+						if contentMap["type"] == "text" {
+							systemContent += contentMap["text"].(string)
+						}
+					}
+				}
+			}
+			systemPrompt = &systemContent
 		} else {
-			newMessages = append(newMessages, openAIReq.Messages[i])
+			// Process regular messages
+			claudeMessage := ClaudeMessage{
+				Role:    message.Role,
+				Content: []ClaudeContent{},
+			}
+			
+			switch content := message.Content.(type) {
+			case string:
+				// Simple string content
+				claudeMessage.Content = append(claudeMessage.Content, ClaudeContent{
+					Type: "text",
+					Text: content,
+				})
+			case []interface{}:
+				// Process array of content blocks
+				for _, part := range content {
+					if contentMap, ok := part.(map[string]interface{}); ok {
+						contentType, _ := contentMap["type"].(string)
+						
+						if contentType == "text" {
+							text, _ := contentMap["text"].(string)
+							claudeMessage.Content = append(claudeMessage.Content, ClaudeContent{
+								Type: "text",
+								Text: text,
+							})
+						} else if contentType == "image_url" {
+							// Handle image URLs
+							if imageURL, ok := contentMap["image_url"].(map[string]interface{}); ok {
+								url, _ := imageURL["url"].(string)
+								
+								// For base64 images
+								if strings.HasPrefix(url, "data:image/") {
+									// Extract data portion from data URL
+									parts := strings.Split(url, ",")
+									if len(parts) >= 2 {
+										mediaType := strings.TrimSuffix(strings.TrimPrefix(parts[0], "data:"), ";base64")
+										source := &ClaudeSource{
+											Type:      "base64",
+											MediaType: mediaType,
+											Data:      parts[1],
+										}
+										imageContent := ClaudeContent{
+											Type:   "image",
+											Source: source,
+										}
+										claudeMessage.Content = append(claudeMessage.Content, imageContent)
+									}
+								} else {
+									// For HTTP URLs
+									source := &ClaudeSource{
+										Type:      "url",
+										MediaType: "image/jpeg", // Default, could be refined with content-type check
+										Data:      url,
+									}
+									imageContent := ClaudeContent{
+										Type:   "image",
+										Source: source,
+									}
+									claudeMessage.Content = append(claudeMessage.Content, imageContent)
+								}
+							}
+						}
+					}
+				}
+			}
+			
+			// Only add message if it has content
+			if len(claudeMessage.Content) > 0 {
+				newMessages = append(newMessages, claudeMessage)
+			}
 		}
 	}
+	
 	return newMessages, systemPrompt
 }
 
@@ -50,6 +149,14 @@ func createClaudeRequest(openAIReq OpenAIRequest, stream bool) ([]byte, error) {
 	claudeReq.Stream = stream
 	claudeReq.Temperature = openAIReq.Temperature
 	claudeReq.TopP = openAIReq.TopP
+	
+	// Debug the Claude request structure
+	debugLog("Claude messages structure:")
+	for i, msg := range claudeReq.Messages {
+		contentJson, _ := json.Marshal(msg.Content)
+		debugLog("Message %d, Role: %s, Content: %s", i, msg.Role, string(contentJson))
+	}
+	
 	return json.Marshal(claudeReq)
 }
 
@@ -65,7 +172,7 @@ func sendClaudeRequest(claudeReqBody []byte, apiKey string) (*http.Response, err
 	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(claudeReqBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("anthropic-version", "2023-06-01") // Consider updating to a newer version if needed
 
 	client := &http.Client{}
 	return client.Do(req)
@@ -97,14 +204,60 @@ func proxyToClaude(c *gin.Context, openAIReq OpenAIRequest) {
 		return
 	}
 
+	// Log raw response for debugging
+	debugLog("Raw Claude API response: %s", string(body))
+	
 	var claudeResp ClaudeAPIResponse
 	if err := json.Unmarshal(body, &claudeResp); err != nil {
+		debugLog("Error unmarshaling Claude response: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse response from Claude API"})
 		return
 	}
+	
+	// Debug the unmarshaled response
+	responseBytes, _ := json.Marshal(claudeResp)
+	debugLog("Unmarshaled Claude response: %s", string(responseBytes))
 	if claudeResp.Error != nil {
 		c.JSON(resp.StatusCode, gin.H{"error": OpenAIError{Type: claudeResp.Error.Type, Message: claudeResp.Error.Message}})
 		return
+	}
+
+	// Extract text content from Claude response
+	var responseText string
+	
+	// Debug the entire response content structure
+	rawContent, _ := json.Marshal(claudeResp.Content)
+	debugLog("Raw content array: %s", string(rawContent))
+	
+	for i, content := range claudeResp.Content {
+		// Debug each content block
+		debugLog("Content block %d, type: %s, text: %s", i, content.Type, content.Text)
+		
+		if content.Type == "text" {
+			responseText += content.Text
+		} else if content.Type == "" && content.Text != "" {
+			// Handle older API response format or unexpected structure
+			responseText += content.Text
+		}
+	}
+	
+	// If responseText is still empty, try different approach
+	if responseText == "" && len(claudeResp.Content) > 0 {
+		debugLog("No text found in content blocks, trying alternative extraction")
+		
+		// Try to extract text regardless of content type
+		for _, content := range claudeResp.Content {
+			if content.Text != "" {
+				responseText += content.Text
+				debugLog("Found text in content block: %s", content.Text)
+			}
+		}
+		
+		// Last resort: use the first block's text field no matter what
+		if responseText == "" && len(claudeResp.Content) > 0 {
+			responseText = claudeResp.Content[0].Text
+			debugLog("Last resort text: %s", responseText)
+		}
 	}
 
 	openAIResp := OpenAIResponse{
@@ -128,7 +281,7 @@ func proxyToClaude(c *gin.Context, openAIReq OpenAIRequest) {
 					Content string `json:"content"`
 				}{
 					Role:    "assistant",
-					Content: claudeResp.Content[0].Text,
+					Content: responseText,
 				},
 				Logprobs:     nil,
 				FinishReason: "stop",
@@ -139,7 +292,7 @@ func proxyToClaude(c *gin.Context, openAIReq OpenAIRequest) {
 			CompletionTokens int `json:"completion_tokens"`
 			TotalTokens      int `json:"total_tokens"`
 		}{
-			PromptTokens:     len(openAIReq.Messages[0].Content),
+			PromptTokens:     claudeResp.Usage.InputTokens,
 			CompletionTokens: claudeResp.Usage.OutputTokens,
 			TotalTokens:      claudeResp.Usage.InputTokens + claudeResp.Usage.OutputTokens,
 		},
@@ -148,11 +301,18 @@ func proxyToClaude(c *gin.Context, openAIReq OpenAIRequest) {
 }
 
 func proxyToClaudeStream(c *gin.Context, openAIReq OpenAIRequest) {
+	// Debug the request structure
+	reqBytes, _ := json.Marshal(openAIReq)
+	debugLog("Streaming request: %s", string(reqBytes))
+	
 	claudeReqBody, err := createClaudeRequest(openAIReq, true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal request for Claude API"})
 		return
 	}
+	
+	// Debug the Claude request being sent
+	debugLog("Claude request: %s", string(claudeReqBody))
 
 	apiKey, err := parseAuthorizationHeader(c)
 	if err != nil {
@@ -194,6 +354,9 @@ func proxyToClaudeStream(c *gin.Context, openAIReq OpenAIRequest) {
 		}
 
 		lineStr := strings.TrimSpace(string(line))
+		// Debug each line received
+		debugLog("Stream line: %s", lineStr)
+		
 		if strings.HasPrefix(lineStr, "event: message_start") {
 			data := fmt.Sprintf("data: {\"choices\":[{\"delta\":{\"refusal\":null,\"role\":\"assistant\"},\"finish_reason\":null,\"index\":0,\"logprobs\":null}],\"created\":%d,\"id\":\"%s\",\"model\":\"%s\",\"object\":\"chat.completion.chunk\",\"system_fingerprint\":\"fp_f3927aa00d\"}\n\n",
 				timestamp, chatID, openAIReq.Model)
@@ -201,19 +364,58 @@ func proxyToClaudeStream(c *gin.Context, openAIReq OpenAIRequest) {
 			flusher.Flush()
 		} else if strings.HasPrefix(lineStr, "data:") {
 			dataStr := strings.TrimSpace(strings.TrimPrefix(lineStr, "data:"))
+			
+			// Debug the raw data
+			debugLog("Stream data chunk: %s", dataStr)
+			
 			var data map[string]interface{}
-			json.Unmarshal([]byte(dataStr), &data)
+			err := json.Unmarshal([]byte(dataStr), &data)
+			if err != nil {
+				debugLog("Error parsing stream data: %v", err)
+				continue
+			}
+			
+			debugLog("Data type: %v", data["type"])
+			
 			if data["type"] == "content_block_delta" {
-				delta := data["delta"].(map[string]interface{})
+				deltaRaw, ok := data["delta"]
+				if !ok {
+					debugLog("No delta field in content_block_delta: %v", data)
+					continue
+				}
+				
+				delta, ok := deltaRaw.(map[string]interface{})
+				if !ok {
+					debugLog("Delta is not a map: %v", deltaRaw)
+					continue
+				}
+				
+				debugLog("Delta type: %v", delta["type"])
+				
 				if delta["type"] == "text_delta" {
-					content += delta["text"].(string)
-					data := fmt.Sprintf("data: {\"choices\":[{\"delta\":{\"content\":\"%s\"},\"finish_reason\":null,\"index\":0,\"logprobs\":null}],\"created\":%d,\"id\":\"%s\",\"model\":\"%s\",\"object\":\"chat.completion.chunk\",\"system_fingerprint\":\"fp_f3927aa00d\"}\n\n",
-						escapeJSON(delta["text"].(string)), timestamp, chatID, openAIReq.Model)
-					c.Writer.WriteString(data)
+					textDeltaRaw, ok := delta["text"]
+					if !ok {
+						debugLog("No text field in text_delta: %v", delta)
+						continue
+					}
+					
+					textDelta, ok := textDeltaRaw.(string)
+					if !ok {
+						debugLog("Text delta is not a string: %v", textDeltaRaw)
+						continue
+					}
+					
+					content += textDelta
+					responseData := fmt.Sprintf("data: {\"choices\":[{\"delta\":{\"content\":\"%s\"},\"finish_reason\":null,\"index\":0,\"logprobs\":null}],\"created\":%d,\"id\":\"%s\",\"model\":\"%s\",\"object\":\"chat.completion.chunk\",\"system_fingerprint\":\"fp_f3927aa00d\"}\n\n",
+						escapeJSON(textDelta), timestamp, chatID, openAIReq.Model)
+					c.Writer.WriteString(responseData)
 					flusher.Flush()
 				}
 			}
 		} else if strings.HasPrefix(lineStr, "event: message_stop") {
+			// Debug message stop event
+			debugLog("Received message_stop event. Complete content: %s", content)
+			
 			data := fmt.Sprintf("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\",\"index\":0,\"logprobs\":null}],\"created\":%d,\"id\":\"%s\",\"model\":\"%s\",\"object\":\"chat.completion.chunk\",\"system_fingerprint\":\"fp_f3927aa00d\"}\n\n",
 				timestamp, chatID, openAIReq.Model)
 			c.Writer.WriteString(data)
@@ -309,8 +511,22 @@ func isInSlice(str string, list []string) bool {
 func main() {
 	// Define command line flags
 	var port string
+	var debug bool
 	flag.StringVar(&port, "p", "", "specify server port")
+	flag.BoolVar(&debug, "debug", false, "enable debug mode")
 	flag.Parse()
+
+	// Initialize debug mode from flag or environment variable
+	if debug {
+		debugMode = true
+	} else {
+		debugEnv := os.Getenv("DEBUG")
+		if debugEnv != "" {
+			if debugVal, err := strconv.ParseBool(debugEnv); err == nil {
+				debugMode = debugVal
+			}
+		}
+	}
 
 	// If command line flag is empty, try to get port from environment variable
 	if port == "" {
@@ -337,6 +553,6 @@ func main() {
 		})
 	})
 	// Start Claude2OpenAI with specified port
-	fmt.Printf("Claude2OpenAI is running on port %s\n", port)
+	fmt.Printf("Claude2OpenAI is running on port %s (debug mode: %v)\n", port, debugMode)
 	r.Run(fmt.Sprintf(":%s", port))
 }

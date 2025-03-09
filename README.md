@@ -34,6 +34,54 @@ curl http://127.0.0.1:6600/v1/chat/completions \
   }'
 ```
 
+## Features
+
+### Image Support
+
+Claude2OpenAI supports images in the same format as OpenAI. You can include images in your messages using either base64-encoded images or URLs.
+
+```bash
+curl http://127.0.0.1:6600/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-ant-xxxxxxxxxxxxxxxx" \
+  -d '{
+    "model": "claude-3-5-sonnet-20241022",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "What's in this image?"
+          },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "https://example.com/image.jpg"
+            }
+          }
+        ]
+      }
+    ]
+  }'
+```
+
+### Debug Mode
+
+You can enable debug mode to help troubleshoot issues:
+
+1. Using an environment variable:
+```bash
+DEBUG=true ./claude2openai
+```
+
+2. Using the command-line flag:
+```bash
+./claude2openai -debug
+```
+
+In debug mode, detailed information about requests and responses will be logged to help with troubleshooting.
+
 ## Usage
 ### Homebrew (MacOS)
 
