@@ -46,7 +46,7 @@ func processMessages(openAIReq OpenAIRequest) ([]ClaudeMessage, *string) {
 
 	for i := 0; i < len(openAIReq.Messages); i++ {
 		message := openAIReq.Messages[i]
-		
+
 		if message.Role == "system" {
 			// Extract system message as string
 			var systemContent string
@@ -70,7 +70,7 @@ func processMessages(openAIReq OpenAIRequest) ([]ClaudeMessage, *string) {
 				Role:    message.Role,
 				Content: []ClaudeContent{},
 			}
-			
+
 			switch content := message.Content.(type) {
 			case string:
 				// Simple string content
@@ -83,7 +83,7 @@ func processMessages(openAIReq OpenAIRequest) ([]ClaudeMessage, *string) {
 				for _, part := range content {
 					if contentMap, ok := part.(map[string]interface{}); ok {
 						contentType, _ := contentMap["type"].(string)
-						
+
 						if contentType == "text" {
 							text, _ := contentMap["text"].(string)
 							claudeMessage.Content = append(claudeMessage.Content, ClaudeContent{
@@ -94,7 +94,7 @@ func processMessages(openAIReq OpenAIRequest) ([]ClaudeMessage, *string) {
 							// Handle image URLs
 							if imageURL, ok := contentMap["image_url"].(map[string]interface{}); ok {
 								url, _ := imageURL["url"].(string)
-								
+
 								// For base64 images
 								if strings.HasPrefix(url, "data:image/") {
 									// Extract data portion from data URL
@@ -130,14 +130,14 @@ func processMessages(openAIReq OpenAIRequest) ([]ClaudeMessage, *string) {
 					}
 				}
 			}
-			
+
 			// Only add message if it has content
 			if len(claudeMessage.Content) > 0 {
 				newMessages = append(newMessages, claudeMessage)
 			}
 		}
 	}
-	
+
 	return newMessages, systemPrompt
 }
 
@@ -149,14 +149,14 @@ func createClaudeRequest(openAIReq OpenAIRequest, stream bool) ([]byte, error) {
 	claudeReq.Stream = stream
 	claudeReq.Temperature = openAIReq.Temperature
 	claudeReq.TopP = openAIReq.TopP
-	
+
 	// Debug the Claude request structure
 	debugLog("Claude messages structure:")
 	for i, msg := range claudeReq.Messages {
 		contentJson, _ := json.Marshal(msg.Content)
 		debugLog("Message %d, Role: %s, Content: %s", i, msg.Role, string(contentJson))
 	}
-	
+
 	return json.Marshal(claudeReq)
 }
 
@@ -169,7 +169,21 @@ func parseAuthorizationHeader(c *gin.Context) (string, error) {
 }
 
 func sendClaudeRequest(claudeReqBody []byte, apiKey string) (*http.Response, error) {
-	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(claudeReqBody))
+	// Get endpoint from environment variable or use default
+	endpoint := os.Getenv("ANTHROPIC_ENDPOINT")
+	if endpoint == "" {
+		endpoint = "https://api.anthropic.com/v1/messages"
+	} else {
+		endpoint = strings.TrimSuffix(endpoint, "/")
+		if strings.HasSuffix(endpoint, "/v1/messages") || strings.HasSuffix(endpoint, "/v1") {
+			return nil, fmt.Errorf("invalid ANTHROPIC_ENDPOINT format: %s. The endpoint should be the base URL only (e.g., https://api.anthropic.com) without '/v1/messages'", endpoint)
+		}
+		endpoint = endpoint + "/v1/messages"
+	}
+
+	debugLog("Using Claude API endpoint: %s", endpoint)
+
+	req, _ := http.NewRequest("POST", endpoint, bytes.NewBuffer(claudeReqBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01") // Consider updating to a newer version if needed
@@ -206,14 +220,14 @@ func proxyToClaude(c *gin.Context, openAIReq OpenAIRequest) {
 
 	// Log raw response for debugging
 	debugLog("Raw Claude API response: %s", string(body))
-	
+
 	var claudeResp ClaudeAPIResponse
 	if err := json.Unmarshal(body, &claudeResp); err != nil {
 		debugLog("Error unmarshaling Claude response: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse response from Claude API"})
 		return
 	}
-	
+
 	// Debug the unmarshaled response
 	responseBytes, _ := json.Marshal(claudeResp)
 	debugLog("Unmarshaled Claude response: %s", string(responseBytes))
@@ -224,15 +238,15 @@ func proxyToClaude(c *gin.Context, openAIReq OpenAIRequest) {
 
 	// Extract text content from Claude response
 	var responseText string
-	
+
 	// Debug the entire response content structure
 	rawContent, _ := json.Marshal(claudeResp.Content)
 	debugLog("Raw content array: %s", string(rawContent))
-	
+
 	for i, content := range claudeResp.Content {
 		// Debug each content block
 		debugLog("Content block %d, type: %s, text: %s", i, content.Type, content.Text)
-		
+
 		if content.Type == "text" {
 			responseText += content.Text
 		} else if content.Type == "" && content.Text != "" {
@@ -240,11 +254,11 @@ func proxyToClaude(c *gin.Context, openAIReq OpenAIRequest) {
 			responseText += content.Text
 		}
 	}
-	
+
 	// If responseText is still empty, try different approach
 	if responseText == "" && len(claudeResp.Content) > 0 {
 		debugLog("No text found in content blocks, trying alternative extraction")
-		
+
 		// Try to extract text regardless of content type
 		for _, content := range claudeResp.Content {
 			if content.Text != "" {
@@ -252,7 +266,7 @@ func proxyToClaude(c *gin.Context, openAIReq OpenAIRequest) {
 				debugLog("Found text in content block: %s", content.Text)
 			}
 		}
-		
+
 		// Last resort: use the first block's text field no matter what
 		if responseText == "" && len(claudeResp.Content) > 0 {
 			responseText = claudeResp.Content[0].Text
@@ -304,13 +318,13 @@ func proxyToClaudeStream(c *gin.Context, openAIReq OpenAIRequest) {
 	// Debug the request structure
 	reqBytes, _ := json.Marshal(openAIReq)
 	debugLog("Streaming request: %s", string(reqBytes))
-	
+
 	claudeReqBody, err := createClaudeRequest(openAIReq, true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal request for Claude API"})
 		return
 	}
-	
+
 	// Debug the Claude request being sent
 	debugLog("Claude request: %s", string(claudeReqBody))
 
@@ -356,7 +370,7 @@ func proxyToClaudeStream(c *gin.Context, openAIReq OpenAIRequest) {
 		lineStr := strings.TrimSpace(string(line))
 		// Debug each line received
 		debugLog("Stream line: %s", lineStr)
-		
+
 		if strings.HasPrefix(lineStr, "event: message_start") {
 			data := fmt.Sprintf("data: {\"choices\":[{\"delta\":{\"refusal\":null,\"role\":\"assistant\"},\"finish_reason\":null,\"index\":0,\"logprobs\":null}],\"created\":%d,\"id\":\"%s\",\"model\":\"%s\",\"object\":\"chat.completion.chunk\",\"system_fingerprint\":\"fp_f3927aa00d\"}\n\n",
 				timestamp, chatID, openAIReq.Model)
@@ -364,47 +378,47 @@ func proxyToClaudeStream(c *gin.Context, openAIReq OpenAIRequest) {
 			flusher.Flush()
 		} else if strings.HasPrefix(lineStr, "data:") {
 			dataStr := strings.TrimSpace(strings.TrimPrefix(lineStr, "data:"))
-			
+
 			// Debug the raw data
 			debugLog("Stream data chunk: %s", dataStr)
-			
+
 			var data map[string]interface{}
 			err := json.Unmarshal([]byte(dataStr), &data)
 			if err != nil {
 				debugLog("Error parsing stream data: %v", err)
 				continue
 			}
-			
+
 			debugLog("Data type: %v", data["type"])
-			
+
 			if data["type"] == "content_block_delta" {
 				deltaRaw, ok := data["delta"]
 				if !ok {
 					debugLog("No delta field in content_block_delta: %v", data)
 					continue
 				}
-				
+
 				delta, ok := deltaRaw.(map[string]interface{})
 				if !ok {
 					debugLog("Delta is not a map: %v", deltaRaw)
 					continue
 				}
-				
+
 				debugLog("Delta type: %v", delta["type"])
-				
+
 				if delta["type"] == "text_delta" {
 					textDeltaRaw, ok := delta["text"]
 					if !ok {
 						debugLog("No text field in text_delta: %v", delta)
 						continue
 					}
-					
+
 					textDelta, ok := textDeltaRaw.(string)
 					if !ok {
 						debugLog("Text delta is not a string: %v", textDeltaRaw)
 						continue
 					}
-					
+
 					content += textDelta
 					responseData := fmt.Sprintf("data: {\"choices\":[{\"delta\":{\"content\":\"%s\"},\"finish_reason\":null,\"index\":0,\"logprobs\":null}],\"created\":%d,\"id\":\"%s\",\"model\":\"%s\",\"object\":\"chat.completion.chunk\",\"system_fingerprint\":\"fp_f3927aa00d\"}\n\n",
 						escapeJSON(textDelta), timestamp, chatID, openAIReq.Model)
@@ -415,7 +429,7 @@ func proxyToClaudeStream(c *gin.Context, openAIReq OpenAIRequest) {
 		} else if strings.HasPrefix(lineStr, "event: message_stop") {
 			// Debug message stop event
 			debugLog("Received message_stop event. Complete content: %s", content)
-			
+
 			data := fmt.Sprintf("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\",\"index\":0,\"logprobs\":null}],\"created\":%d,\"id\":\"%s\",\"model\":\"%s\",\"object\":\"chat.completion.chunk\",\"system_fingerprint\":\"fp_f3927aa00d\"}\n\n",
 				timestamp, chatID, openAIReq.Model)
 			c.Writer.WriteString(data)
@@ -468,7 +482,7 @@ func handler(c *gin.Context) {
 
 	// Get allowed models
 	allowedModels := getAllowedModels()
-	
+
 	// Default model is the first in the allowed models list
 	if !isInSlice(openAIReq.Model, allowedModels) {
 		openAIReq.Model = allowedModels[0]
@@ -485,7 +499,7 @@ func handler(c *gin.Context) {
 func modelsHandler(c *gin.Context) {
 	// Get allowed models
 	allowedModels := getAllowedModels()
-	
+
 	openAIResp := OpenAIModelsResponse{
 		Object: "list",
 	}
